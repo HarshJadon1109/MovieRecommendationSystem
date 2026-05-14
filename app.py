@@ -3,23 +3,34 @@ Movie Recommendation System — CineMatch
 ========================================
 Optimized for Hugging Face Spaces deployment.
 
-movie_data.pkl (250MB) is stored in the HF Space repo via Git LFS.
-HF Spaces clones the repo to /home/user/app/ — the pkl is available
-at the same path as app.py, so no download logic is needed.
+movie_data.pkl is too large for GitHub/HF repo directly.
+This app downloads it automatically from Google Drive on first run.
 
-Run locally:  streamlit run app.py
-HF Spaces:    Set SDK to "streamlit" in README.md
+How to set your Google Drive File ID:
+  1. Upload movie_data.pkl to Google Drive
+  2. Right-click → Share → "Anyone with the link can view"
+  3. Copy link: https://drive.google.com/file/d/YOUR_FILE_ID/view
+  4. Paste YOUR_FILE_ID into GDRIVE_FILE_ID below (line 30)
 """
 
 import random
 import os
 import pickle
+import gdown
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import requests
 import streamlit as st
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★ PASTE YOUR GOOGLE DRIVE FILE ID HERE  (line 30)
+# ─────────────────────────────────────────────────────────────────────────────
+GDRIVE_FILE_ID = "YOUR_GOOGLE_DRIVE_FILE_ID_HERE"
+# Example: GDRIVE_FILE_ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
+
+PKL_PATH = Path(__file__).parent / "movie_data.pkl"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG  (must be very first Streamlit call)
@@ -34,24 +45,18 @@ st.set_page_config(
 # ─────────────────────────────────────────────────────────────────────────────
 # API KEY
 # Add TMDB_API_KEY in HF Space → Settings → Repository secrets
-# HF injects secrets as environment variables automatically.
 # ─────────────────────────────────────────────────────────────────────────────
 def get_api_key() -> Optional[str]:
-    try:                                   # works if secrets.toml is present
+    try:
         return st.secrets["TMDB_API_KEY"]
     except (KeyError, FileNotFoundError):
         pass
-    return os.getenv("TMDB_API_KEY")       # HF Spaces secrets → env vars
+    return os.getenv("TMDB_API_KEY")
 
 TMDB_API_KEY = get_api_key()
 TMDB_BASE    = "https://api.themoviedb.org/3"
 POSTER_BASE  = "https://image.tmdb.org/t/p/w500"
 FALLBACK_IMG = "https://placehold.co/300x450/1a1a2e/facc15?text=No+Poster"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PKL PATH — same directory as app.py (works locally and on HF Spaces)
-# ─────────────────────────────────────────────────────────────────────────────
-PKL_PATH = Path(__file__).parent / "movie_data.pkl"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GLOBAL CSS — Netflix-inspired dark theme
@@ -89,14 +94,35 @@ hr{border-color:var(--border)!important;}
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# GOOGLE DRIVE DOWNLOAD
+# ─────────────────────────────────────────────────────────────────────────────
+def download_from_gdrive(file_id: str, dest: Path) -> bool:
+    """Download pkl from Google Drive using gdown. Returns True on success."""
+    try:
+        url = f"https://drive.google.com/uc?id={1M77RUKLCPAdIgE7M2JGiNhIAHBqShECz}"
+        gdown.download(url, str(dest), quiet=False)
+        return dest.exists() and dest.stat().st_size > 0
+    except Exception as e:
+        st.error(f"❌ Google Drive download failed: {e}")
+        return False
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DATA LOADING
 # ─────────────────────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def load_movie_data(path: str):
-    if not Path(path).exists():
-        st.error(f"❌ `movie_data.pkl` not found at `{path}`.")
-        st.info("Push `movie_data.pkl` to your HF Space repo using Git LFS (see README).")
-        st.stop()
+    p = Path(path)
+
+    # Download from Google Drive if not already present
+    if not p.exists():
+        if GDRIVE_FILE_ID == "YOUR_GOOGLE_DRIVE_FILE_ID_HERE":
+            st.error("❌ Please set your GDRIVE_FILE_ID in app.py (line 30).")
+            st.stop()
+        with st.spinner("⬇️ Downloading model data from Google Drive (~250 MB) — only happens once…"):
+            ok = download_from_gdrive(GDRIVE_FILE_ID, p)
+        if not ok:
+            st.error("❌ Download failed. Check your GDRIVE_FILE_ID and make sure the file is shared publicly.")
+            st.stop()
 
     with open(path, "rb") as f:
         data = pickle.load(f)
@@ -160,12 +186,12 @@ def get_recommendations(title: str, movies: pd.DataFrame, cosine_sim, top_n: int
 # CARD RENDERERS
 # ─────────────────────────────────────────────────────────────────────────────
 def render_grid_card(row: pd.Series) -> None:
-    d     = fetch_tmdb_details(int(row["movie_id"]))
-    sim   = row.get("similarity", None)
+    d       = fetch_tmdb_details(int(row["movie_id"]))
+    sim     = row.get("similarity", None)
     ov_full = row.get("overview", "") or ""
-    ov    = ov_full[:100] + ("…" if len(ov_full) > 100 else "")
-    ghtml = "".join(f'<span class="genre-tag">{g}</span>' for g in d["genres"][:3])
-    meta  = " &nbsp;·&nbsp; ".join(p for p in [
+    ov      = ov_full[:100] + ("…" if len(ov_full) > 100 else "")
+    ghtml   = "".join(f'<span class="genre-tag">{g}</span>' for g in d["genres"][:3])
+    meta    = " &nbsp;·&nbsp; ".join(p for p in [
         d["release_date"][:4] if d["release_date"] != "N/A" else "",
         f"⭐ {d['vote_average']}" if d["vote_average"] != "N/A" else ""
     ] if p)

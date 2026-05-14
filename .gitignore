@@ -1,0 +1,21 @@
+# Environments
+.env
+.venv/
+venv/
+ENV/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+
+# Data files (GitHub blocks files > 100MB, so we must ignore the pickle file)
+movie_data.pkl
+*.csv
+*.ipynb
+
+# OS generated files
+.DS_Store
+Thumbs.db

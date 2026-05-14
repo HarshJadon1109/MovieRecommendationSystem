@@ -41,7 +41,7 @@ A professional, Netflix-inspired movie recommendation web application built with
    - Open the `.env` file in the root directory.
    - Replace `your_tmdb_api_key_here` with your actual API key:
      ```env
-     TMDB_API_KEY=1234567890abcdef1234567890abcdef
+     TMDB_API_KEY=1234567890987654321234567890
      ```
    - *Alternatively, you can use Streamlit secrets by creating a `.streamlit/secrets.toml` file.*
 

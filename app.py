@@ -1,17 +1,10 @@
 """
 Movie Recommendation System — CineMatch
-========================================
-Optimized for Hugging Face Spaces deployment.
-
-This version fixes:
-✅ Google Drive download bug
-✅ Proper file ID usage
-✅ Better error handling
-✅ Cleaner loading logic
+Fully Fixed Version
 """
 
-import random
 import os
+import random
 import pickle
 from pathlib import Path
 from typing import Optional
@@ -21,51 +14,58 @@ import pandas as pd
 import requests
 import streamlit as st
 
-# ─────────────────────────────────────────────────────────────────────────────
-# GOOGLE DRIVE FILE ID
-# Replace with your actual file ID
-# Example:
-# https://drive.google.com/file/d/1ABCxyz123/view
-# File ID = 1ABCxyz123
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# CONFIG
+# ─────────────────────────────────────────────────────────────
+
 GDRIVE_FILE_ID = "1M77RUKLCPAdIgE7M2JGiNhIAHBqShECz"
 
-PKL_PATH = Path(__file__).parent / "movie_data.pkl"
+PKL_PATH = Path("movie_data.pkl")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PAGE CONFIG
-# ─────────────────────────────────────────────────────────────────────────────
+TMDB_BASE = "https://api.themoviedb.org/3"
+POSTER_BASE = "https://image.tmdb.org/t/p/w500"
+
+# Better fallback image
+FALLBACK_IMG = (
+    "https://via.placeholder.com/300x450.png?text=No+Poster"
+)
+
+# ─────────────────────────────────────────────────────────────
+# STREAMLIT PAGE
+# ─────────────────────────────────────────────────────────────
+
 st.set_page_config(
     page_title="CineMatch",
     page_icon="🎬",
     layout="wide"
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TMDB API KEY
-# Add in Hugging Face Secrets:
-# TMDB_API_KEY = your_key
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# GET TMDB API KEY
+# ─────────────────────────────────────────────────────────────
+
 def get_api_key() -> Optional[str]:
+
+    # Streamlit secrets
     try:
         return st.secrets["TMDB_API_KEY"]
     except Exception:
-        return os.getenv("TMDB_API_KEY")
+        pass
+
+    # Environment variable
+    return os.getenv("TMDB_API_KEY")
+
 
 TMDB_API_KEY = get_api_key()
 
-TMDB_BASE = "https://api.themoviedb.org/3"
-POSTER_BASE = "https://image.tmdb.org/t/p/w500"
-FALLBACK_IMG = "https://placehold.co/300x450?text=No+Poster"
+# ─────────────────────────────────────────────────────────────
+# DOWNLOAD PICKLE FILE
+# ─────────────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────────────────
-# GOOGLE DRIVE DOWNLOAD
-# ─────────────────────────────────────────────────────────────────────────────
-def download_from_gdrive(file_id: str, dest: Path) -> bool:
-    """
-    Download movie_data.pkl from Google Drive
-    """
+def download_from_gdrive(file_id: str, dest: Path):
+
     try:
+
         url = f"https://drive.google.com/uc?id={file_id}"
 
         gdown.download(
@@ -74,135 +74,142 @@ def download_from_gdrive(file_id: str, dest: Path) -> bool:
             quiet=False
         )
 
-        return dest.exists() and dest.stat().st_size > 0
+        return dest.exists()
 
     except Exception as e:
-        st.error(f"Download failed: {e}")
+
+        st.error(f"Download Error: {e}")
         return False
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
 # LOAD MOVIE DATA
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+
 @st.cache_data(show_spinner=False)
-def load_movie_data(path: str):
+def load_movie_data():
 
-    p = Path(path)
+    # Download if file missing
+    if not PKL_PATH.exists():
 
-    # Download if missing
-    if not p.exists():
-
-        if not GDRIVE_FILE_ID:
-            st.error("Google Drive File ID missing.")
-            st.stop()
-
-        with st.spinner("Downloading movie data..."):
+        with st.spinner("Downloading movie dataset..."):
 
             success = download_from_gdrive(
                 GDRIVE_FILE_ID,
-                p
+                PKL_PATH
             )
 
         if not success:
-            st.error("Could not download movie_data.pkl")
             st.stop()
 
     # Load pickle
     try:
-        with open(path, "rb") as f:
+
+        with open(PKL_PATH, "rb") as f:
             data = pickle.load(f)
 
     except Exception as e:
-        st.error(f"Pickle load failed: {e}")
+
+        st.error(f"Pickle Load Error: {e}")
         st.stop()
 
-    # Handle tuple format
-    if isinstance(data, (list, tuple)) and len(data) == 2:
+    # Handle tuple
+    if isinstance(data, (list, tuple)):
+
         movies_df, cosine_sim = data
 
-    # Handle dictionary format
+    # Handle dictionary
     elif isinstance(data, dict):
-        movies_df = data.get("movies")
-        cosine_sim = data.get("cosine_sim")
+
+        movies_df = data["movies"]
+        cosine_sim = data["cosine_sim"]
 
     else:
-        raise ValueError(
-            "Unexpected pickle format. "
-            "Expected tuple or dictionary."
+
+        st.error("Invalid pickle format")
+        st.stop()
+
+    # Validation
+    required = {"title", "movie_id"}
+
+    if not required.issubset(movies_df.columns):
+
+        st.error(
+            f"Missing columns: "
+            f"{required - set(movies_df.columns)}"
         )
 
-    # Validate columns
-    required_cols = {"title", "movie_id"}
-
-    missing = required_cols - set(movies_df.columns)
-
-    if missing:
-        raise KeyError(f"Missing columns: {missing}")
+        st.stop()
 
     movies_df = movies_df.reset_index(drop=True)
 
-    movies_df["title_lower"] = (
-        movies_df["title"]
-        .astype(str)
-        .str.lower()
-    )
-
     return movies_df, cosine_sim
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TMDB DETAILS
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# FETCH TMDB DETAILS
+# ─────────────────────────────────────────────────────────────
+
 @st.cache_data(ttl=3600)
-def fetch_tmdb_details(movie_id: int):
+def fetch_tmdb_details(movie_id):
 
     default = {
         "poster_url": FALLBACK_IMG,
         "release_date": "N/A",
         "vote_average": "N/A",
-        "genres": [],
-        "overview": ""
+        "overview": "No overview available."
     }
 
+    # Missing API key
     if not TMDB_API_KEY:
         return default
 
     try:
 
-        url = (
-            f"{TMDB_BASE}/movie/{movie_id}"
-            f"?api_key={TMDB_API_KEY}"
+        url = f"{TMDB_BASE}/movie/{movie_id}"
+
+        response = requests.get(
+            url,
+            params={"api_key": TMDB_API_KEY},
+            timeout=10
         )
 
-        response = requests.get(url, timeout=10)
-
-        response.raise_for_status()
+        # Invalid response
+        if response.status_code != 200:
+            return default
 
         data = response.json()
 
-        poster = data.get("poster_path")
+        poster_path = data.get("poster_path")
+
+        poster_url = (
+            f"{POSTER_BASE}{poster_path}"
+            if poster_path
+            else FALLBACK_IMG
+        )
 
         return {
-            "poster_url": (
-                f"{POSTER_BASE}{poster}"
-                if poster else FALLBACK_IMG
+            "poster_url": poster_url,
+            "release_date": (
+                data.get("release_date")
+                or "N/A"
             ),
-            "release_date": data.get("release_date", "N/A"),
             "vote_average": round(
                 float(data.get("vote_average", 0)),
                 1
             ),
-            "genres": [
-                g["name"]
-                for g in data.get("genres", [])
-            ],
-            "overview": data.get("overview", "")
+            "overview": (
+                data.get("overview")
+                or "No overview available."
+            )
         }
 
     except Exception:
+
         return default
 
-# ─────────────────────────────────────────────────────────────────────────────
-# RECOMMENDATION FUNCTION
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# RECOMMENDATION ENGINE
+# ─────────────────────────────────────────────────────────────
+
 def get_recommendations(
     title,
     movies,
@@ -213,67 +220,81 @@ def get_recommendations(
     matches = movies[movies["title"] == title]
 
     if matches.empty:
-        raise ValueError(f"{title} not found.")
+
+        raise ValueError(
+            f"{title} not found in dataset."
+        )
 
     idx = matches.index[0]
 
-    sim_scores = list(
+    similarity_scores = list(
         enumerate(cosine_sim[idx])
     )
 
-    sim_scores = sorted(
-        sim_scores,
+    similarity_scores = sorted(
+        similarity_scores,
         key=lambda x: x[1],
         reverse=True
     )
 
-    sim_scores = sim_scores[1:top_n + 1]
-
-    movie_indices = [i[0] for i in sim_scores]
-
-    similarities = [
-        round(score * 100, 1)
-        for _, score in sim_scores
+    similarity_scores = similarity_scores[
+        1:top_n + 1
     ]
 
-    recs = movies.iloc[movie_indices][
-        ["title", "movie_id"]
-    ].copy()
+    movie_indices = [
+        i[0]
+        for i in similarity_scores
+    ]
 
-    recs["similarity"] = similarities
+    similarity_percentages = [
+        round(score * 100, 1)
+        for _, score in similarity_scores
+    ]
 
-    return recs.reset_index(drop=True)
+    recommendations = movies.iloc[
+        movie_indices
+    ][["title", "movie_id"]].copy()
 
-# ─────────────────────────────────────────────────────────────────────────────
+    recommendations[
+        "similarity"
+    ] = similarity_percentages
+
+    return recommendations.reset_index(drop=True)
+
+# ─────────────────────────────────────────────────────────────
 # LOAD DATA
-# ─────────────────────────────────────────────────────────────────────────────
-try:
-    movies, cosine_sim = load_movie_data(
-        str(PKL_PATH)
-    )
+# ─────────────────────────────────────────────────────────────
 
-except Exception as e:
-    st.error(f"Failed to load data: {e}")
-    st.stop()
+movies, cosine_sim = load_movie_data()
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
 # UI
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+
 st.title("🎬 CineMatch")
 
 st.write(
-    "AI-powered Movie Recommendation System"
+    "AI-Powered Movie Recommendation System"
 )
 
-movie_list = movies["title"].dropna().tolist()
+# TMDB status
+if TMDB_API_KEY:
+    st.success("✅ TMDB API Connected")
+else:
+    st.warning(
+        "⚠️ TMDB API Key Missing "
+        "(Posters won't load)"
+    )
+
+movie_titles = movies["title"].dropna().tolist()
 
 selected_movie = st.selectbox(
-    "Select Movie",
-    movie_list
+    "Choose a Movie",
+    movie_titles
 )
 
 top_n = st.slider(
-    "Number of Recommendations",
+    "Recommendations",
     5,
     20,
     10
@@ -281,7 +302,7 @@ top_n = st.slider(
 
 if st.button("✨ Recommend"):
 
-    with st.spinner("Finding recommendations..."):
+    with st.spinner("Generating recommendations..."):
 
         try:
 
@@ -296,8 +317,6 @@ if st.button("✨ Recommend"):
 
             for idx, row in recommendations.iterrows():
 
-                movie = row["title"]
-
                 details = fetch_tmdb_details(
                     int(row["movie_id"])
                 )
@@ -310,12 +329,18 @@ if st.button("✨ Recommend"):
                     )
 
                     st.markdown(
-                        f"**{movie}**"
+                        f"### {row['title']}"
                     )
 
                     st.caption(
-                        f"⭐ Match: {row['similarity']}%"
+                        f"⭐ Match: "
+                        f"{row['similarity']}%"
+                    )
+
+                    st.caption(
+                        f"📅 {details['release_date']}"
                     )
 
         except Exception as e:
-            st.error(e)
+
+            st.error(f"Error: {e}")
